@@ -1,0 +1,125 @@
+name: Build Windows EXE from Notebook
+
+on:
+  workflow_dispatch: {}     # 手动触发
+  push:
+    branches: [ main ]      # 推送 main 分支也会触发
+
+jobs:
+  build-windows:
+    # 固定 2022，避免“将迁移到 2025”的公告和潜在兼容性问题
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show repo
+        shell: pwsh
+        run: |
+          Write-Host "=== Repo root ==="
+          Get-ChildItem -Force | Format-Table
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\pip\Cache
+          key: pip-${{ runner.os }}-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            pip-${{ runner.os }}-
+
+      - name: Install deps
+        shell: pwsh
+        run: |
+          python -V
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip show jupyter nbconvert pyinstaller pandas openpyxl | findstr /R /C:"Name:" /C:"Version:"
+
+      # 如果仓库里已经有 trade_parser_app.py，就跳过 Notebook 转换
+      - name: Detect or convert Notebook -> trade_parser_app.py
+        shell: pwsh
+        run: |
+          $outPy = "trade_parser_app.py"
+          if (Test-Path $outPy) {
+            Write-Host "Found $outPy, skip conversion."
+            exit 0
+          }
+
+          # 递归查找 .ipynb 或 .ipyn
+          $nb = Get-ChildItem -Recurse -File -Include *.ipynb,*.ipyn | Select-Object -First 1
+          if (-not $nb) {
+            Write-Error "No .ipynb or .ipyn found. Add your Notebook to the repo."
+            exit 1
+          }
+          Write-Host "Found Notebook: $($nb.FullName)"
+
+          # 如为 .ipyn，复制成 .ipynb 临时文件供 nbconvert
+          $tmpNb = $nb.FullName
+          if ($nb.Extension -ieq ".ipyn") {
+            $tmpNb = [System.IO.Path]::ChangeExtension($nb.FullName, ".ipynb")
+            Copy-Item $nb.FullName $tmpNb -Force
+            Write-Host "Copied to $tmpNb for nbconvert"
+          }
+
+          # 转换成脚本
+          python -m jupyter nbconvert --to script "$tmpNb" --output $outPy
+
+          if (-not (Test-Path $outPy)) {
+            Write-Error "nbconvert did not produce $outPy"
+            exit 1
+          }
+
+          # 去掉IPython痕迹
+          (Get-Content $outPy) `
+            | Where-Object { $_ -notmatch 'get_ipython\(' -and $_ -notmatch '^\s*[%!]' -and $_ -notmatch 'ipykernel' } `
+            | Set-Content $outPy -Encoding UTF8
+
+          # 如果没有启动入口，自动补一个
+          $hasMain = Select-String -Path $outPy -Pattern '__main__' -Quiet
+          if (-not $hasMain) {
+            Add-Content $outPy "`nif __name__ == '__main__':`n    App().mainloop()`n"
+            Write-Host "App entry added to $outPy"
+          }
+
+          Write-Host "=== Head of generated $outPy ==="
+          Get-Content $outPy -TotalCount 40 | ForEach-Object { Write-Host $_ }
+
+      - name: Build EXE (onefile)
+        shell: pwsh
+        run: |
+          $iconArg = ""
+          if (Test-Path "app.ico") { $iconArg = "--icon app.ico" }
+          pyinstaller --noconsole --onefile `
+            --name trade_parser_app `
+            --collect-all pandas --collect-all openpyxl `
+            $iconArg `
+            trade_parser_app.py
+
+      - name: Upload artifact (onefile)
+        uses: actions/upload-artifact@v4
+        with:
+          name: trade_parser_app-onefile
+          path: dist/trade_parser_app.exe
+
+      - name: Build folder (onedir)
+        shell: pwsh
+        run: |
+          $iconArg = ""
+          if (Test-Path "app.ico") { $iconArg = "--icon app.ico" }
+          pyinstaller --noconsole --onedir `
+            --name trade_parser_app `
+            --collect-all pandas --collect-all openpyxl `
+            $iconArg `
+            trade_parser_app.py
+
+      - name: Upload artifact (onedir)
+        uses: actions/upload-artifact@v4
+        with:
+          name: trade_parser_app-onedir
+          path: dist/trade_parser_app/**
