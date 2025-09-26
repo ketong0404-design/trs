@@ -95,7 +95,7 @@ jobs:
           Write-Host "=== Head of generated $outPy ==="
           Get-Content $outPy -TotalCount 40 | ForEach-Object { Write-Host $_ }
 
-      - name: List files before build
+           - name: List files before build
         shell: pwsh
         run: |
           Write-Host "=== Working directory ==="
@@ -105,10 +105,15 @@ jobs:
       - name: Build EXE (onefile)
         shell: pwsh
         run: |
-          $args = @("--noconsole","--onefile",
-                    "--name","trade_parser_app",
-                    "--collect-all","pandas",
-                    "--collect-all","openpyxl")
+          $args = @(
+            "--noconsole","--onefile",
+            "--name","trade_parser_app",
+            "--collect-all","pandas",
+            "--collect-all","numpy",
+            "--collect-all","numpy.libs",
+            "--collect-all","openpyxl",
+            "--hidden-import","tkinter"
+          )
           if (Test-Path "app.ico") { $args += @("--icon","app.ico") }
           $args += "trade_parser_app.py"
           Write-Host "PyInstaller args: $args"
@@ -123,10 +128,15 @@ jobs:
       - name: Build folder (onedir)
         shell: pwsh
         run: |
-          $args = @("--noconsole","--onedir",
-                    "--name","trade_parser_app",
-                    "--collect-all","pandas",
-                    "--collect-all","openpyxl")
+          $args = @(
+            "--noconsole","--onedir",
+            "--name","trade_parser_app",
+            "--collect-all","pandas",
+            "--collect-all","numpy",
+            "--collect-all","numpy.libs",
+            "--collect-all","openpyxl",
+            "--hidden-import","tkinter"
+          )
           if (Test-Path "app.ico") { $args += @("--icon","app.ico") }
           $args += "trade_parser_app.py"
           Write-Host "PyInstaller args: $args"
