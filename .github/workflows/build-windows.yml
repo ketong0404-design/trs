@@ -41,7 +41,6 @@ jobs:
           pip install -r requirements.txt
           pip show jupyter nbconvert pyinstaller pandas openpyxl | findstr /R /C:"Name:" /C:"Version:"
 
-      # 如果仓库里已经有 trade_parser_app.py，就跳过 Notebook 转换
       - name: Detect or convert Notebook -> trade_parser_app.py
         shell: pwsh
         run: |
@@ -67,20 +66,26 @@ jobs:
             Write-Host "Copied to $tmpNb for nbconvert"
           }
 
-          # 转换成脚本
-          python -m jupyter nbconvert --to script "$tmpNb" --output $outPy
+          # 注意：--output 只给“基名”，不要带 .py
+          python -m jupyter nbconvert --to=script "$tmpNb" --output "trade_parser_app"
+
+          # nbconvert 会生成 trade_parser_app.py；某些版本可能生成 trade_parser_app.py.py，统一处理
+          if (Test-Path "trade_parser_app.py.py") {
+            Move-Item "trade_parser_app.py.py" "trade_parser_app.py" -Force
+          }
 
           if (-not (Test-Path $outPy)) {
             Write-Error "nbconvert did not produce $outPy"
+            Get-ChildItem -File | Format-Table
             exit 1
           }
 
-          # 去掉IPython痕迹
+          # 去掉 IPython 痕迹（可选）
           (Get-Content $outPy) `
             | Where-Object { $_ -notmatch 'get_ipython\(' -and $_ -notmatch '^\s*[%!]' -and $_ -notmatch 'ipykernel' } `
             | Set-Content $outPy -Encoding UTF8
 
-          # 如果没有启动入口，自动补一个
+          # 自动补入口（如果脚本里没有 mainloop）
           $hasMain = Select-String -Path $outPy -Pattern '__main__' -Quiet
           if (-not $hasMain) {
             Add-Content $outPy "`nif __name__ == '__main__':`n    App().mainloop()`n"
