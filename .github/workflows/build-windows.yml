@@ -96,17 +96,18 @@ jobs:
           pwd
           Get-ChildItem -Force | Format-Table Name,Length
 
+
       - name: Sanity check imports (must succeed)
-        shell: pwsh
+        shell: bash
         run: |
           python - << 'PY'
-import sys
-print("python:", sys.version)
-import pandas, numpy, openpyxl, tkinter
-print("pandas:", pandas.__version__)
-print("numpy:", numpy.__version__)
-print("openpyxl:", openpyxl.__version__)
-PY
+          import sys
+          print("python:", sys.version)
+          import pandas, numpy, openpyxl, tkinter
+          print("pandas:", pandas.__version__)
+          print("numpy:", numpy.__version__)
+          print("openpyxl:", openpyxl.__version__)
+          PY
 
       - name: Build EXE (onefile)
         shell: pwsh
