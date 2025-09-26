@@ -95,16 +95,24 @@ jobs:
           Write-Host "=== Head of generated $outPy ==="
           Get-Content $outPy -TotalCount 40 | ForEach-Object { Write-Host $_ }
 
+      - name: List files before build
+        shell: pwsh
+        run: |
+          Write-Host "=== Working directory ==="
+          pwd
+          Get-ChildItem -Force | Format-Table Name,Length
+
       - name: Build EXE (onefile)
         shell: pwsh
         run: |
-          $iconArg = ""
-          if (Test-Path "app.ico") { $iconArg = "--icon app.ico" }
-          pyinstaller --noconsole --onefile `
-            --name trade_parser_app `
-            --collect-all pandas --collect-all openpyxl `
-            $iconArg `
-            trade_parser_app.py
+          $args = @("--noconsole","--onefile",
+                    "--name","trade_parser_app",
+                    "--collect-all","pandas",
+                    "--collect-all","openpyxl")
+          if (Test-Path "app.ico") { $args += @("--icon","app.ico") }
+          $args += "trade_parser_app.py"
+          Write-Host "PyInstaller args: $args"
+          pyinstaller @args
 
       - name: Upload artifact (onefile)
         uses: actions/upload-artifact@v4
@@ -115,13 +123,14 @@ jobs:
       - name: Build folder (onedir)
         shell: pwsh
         run: |
-          $iconArg = ""
-          if (Test-Path "app.ico") { $iconArg = "--icon app.ico" }
-          pyinstaller --noconsole --onedir `
-            --name trade_parser_app `
-            --collect-all pandas --collect-all openpyxl `
-            $iconArg `
-            trade_parser_app.py
+          $args = @("--noconsole","--onedir",
+                    "--name","trade_parser_app",
+                    "--collect-all","pandas",
+                    "--collect-all","openpyxl")
+          if (Test-Path "app.ico") { $args += @("--icon","app.ico") }
+          $args += "trade_parser_app.py"
+          Write-Host "PyInstaller args: $args"
+          pyinstaller @args
 
       - name: Upload artifact (onedir)
         uses: actions/upload-artifact@v4
