@@ -1,0 +1,6 @@
+# requirements.txt —— 打包/读写Excel所需
+pandas==2.2.2
+openpyxl==3.1.5
+pyinstaller==6.10.0
+jupyter==1.0.0
+nbconvert==7.16.4
