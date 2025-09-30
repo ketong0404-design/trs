@@ -134,24 +134,20 @@ jobs:
           Write-Host "=== Working directory ==="
           pwd
           Get-ChildItem -Force | Format-Table Name,Length
-
       - name: Sanity check imports (must succeed)
         shell: pwsh
         run: |
-          $code = @"
-import sys
-print('python:', sys.version)
-import pandas, numpy, openpyxl, tkinter
-try:
-    import tksheet
-    print('tksheet:', tksheet.__version__)
-except Exception:
-    print('tksheet: not installed (optional)')
-print('pandas:', pandas.__version__)
-print('numpy:', numpy.__version__)
-print('openpyxl:', openpyxl.__version__)
-"@
-          Set-Content -Path sanity_check.py -Value $code -Encoding UTF8
+          Set-Content -Path sanity_check.py -Encoding UTF8 -Value "import sys"
+          Add-Content -Path sanity_check.py -Encoding UTF8 -Value "print('python:', sys.version)"
+          Add-Content -Path sanity_check.py -Encoding UTF8 -Value "import pandas, numpy, openpyxl, tkinter"
+          Add-Content -Path sanity_check.py -Encoding UTF8 -Value "try:"
+          Add-Content -Path sanity_check.py -Encoding UTF8 -Value "    import tksheet"
+          Add-Content -Path sanity_check.py -Encoding UTF8 -Value "    print('tksheet:', tksheet.__version__)"
+          Add-Content -Path sanity_check.py -Encoding UTF8 -Value "except Exception:"
+          Add-Content -Path sanity_check.py -Encoding UTF8 -Value "    print('tksheet: not installed (optional)')"
+          Add-Content -Path sanity_check.py -Encoding UTF8 -Value "print('pandas:', pandas.__version__)"
+          Add-Content -Path sanity_check.py -Encoding UTF8 -Value "print('numpy:', numpy.__version__)"
+          Add-Content -Path sanity_check.py -Encoding UTF8 -Value "print('openpyxl:', openpyxl.__version__)"
           python sanity_check.py
 
       - name: Build EXE (onefile)
