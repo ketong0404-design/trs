@@ -38,81 +38,87 @@ jobs:
           }
           pip show pandas numpy openpyxl pyinstaller nbconvert tksheet | findstr /R /C:"Name:" /C:"Version:"
 
-      # --- 关键：检测/转换为 trade_parser_app.py（鲁棒处理 .py / .ipynb / .ipyn） ---
+      # 将源代码规范化为 trade_parser_app.py（支持 .py / .ipynb / .ipyn）
       - name: Detect or convert Notebook -> trade_parser_app.py
         shell: pwsh
         run: |
           $outPy = "trade_parser_app.py"
+          $generated = $false
+
           if (Test-Path $outPy) {
             Write-Host "Found $outPy, skip conversion."
-            exit 0
+            $generated = $true
           }
 
-          # 1) 优先找现成 .py
-          $py = Get-ChildItem -Recurse -File -Include *.py | Where-Object { $_.Name -eq "trade_parser_app.py" } | Select-Object -First 1
-          if (-not $py) {
-            $py = Get-ChildItem -Recurse -File -Include *.py | Select-Object -First 1
-          }
-          if ($py) {
-            Copy-Item $py.FullName $outPy -Force
-            Write-Host "Copied existing .py as $outPy"
-            goto AfterGen
-          }
-
-          # 2) 找 .ipynb / .ipyn
-          $nb = Get-ChildItem -Recurse -File -Include *.ipynb,*.ipyn | Select-Object -First 1
-          if (-not $nb) {
-            Write-Error "No .py/.ipynb/.ipyn found. Add your source file to the repo."
-            exit 1
-          }
-          Write-Host "Found: $($nb.FullName)"
-
-          # 如为 .ipyn -> 复制为 .ipynb 以便 nbconvert
-          $tmpNb = $nb.FullName
-          if ($nb.Extension -ieq ".ipyn") {
-            $tmpNb = [System.IO.Path]::ChangeExtension($nb.FullName, ".ipynb")
-            Copy-Item $nb.FullName $tmpNb -Force
-            Write-Host "Copied to $tmpNb for nbconvert"
-          }
-
-          # 3) 尝试 JSON 解析以判断是否为合法 Notebook
-          $isJson = $true
-          try {
-            Get-Content -Raw -LiteralPath $tmpNb | ConvertFrom-Json | Out-Null
-          } catch {
-            $isJson = $false
-          }
-
-          if ($isJson) {
-            # 合法 .ipynb -> 使用 nbconvert
-            python -m jupyter nbconvert --to=script "$tmpNb" --output "trade_parser_app"
-            if (Test-Path "trade_parser_app.py.py") {
-              Move-Item "trade_parser_app.py.py" "trade_parser_app.py" -Force
+          if (-not $generated) {
+            # 1) 优先找现成 trade_parser_app.py 或任意 .py
+            $py = Get-ChildItem -Recurse -File -Include *.py | Where-Object { $_.Name -eq "trade_parser_app.py" } | Select-Object -First 1
+            if (-not $py) {
+              $py = Get-ChildItem -Recurse -File -Include *.py | Select-Object -First 1
             }
-            if (-not (Test-Path $outPy)) {
-              Write-Error "nbconvert did not produce $outPy"
-              Get-ChildItem -File | Format-Table
+            if ($py) {
+              Copy-Item $py.FullName $outPy -Force
+              Write-Host "Copied existing .py as $outPy"
+              $generated = $true
+            }
+          }
+
+          if (-not $generated) {
+            # 2) 找 .ipynb / .ipyn
+            $nb = Get-ChildItem -Recurse -File -Include *.ipynb,*.ipyn | Select-Object -First 1
+            if (-not $nb) {
+              Write-Error "No .py/.ipynb/.ipyn found. Add your source file to the repo."
               exit 1
             }
-          } else {
-            # 不是 JSON，几乎可以确定是 .py 被误命名；直接复制为 .py
-            Copy-Item $tmpNb $outPy -Force
-            Write-Host "Source is not JSON; treated as .py and saved to $outPy"
+            Write-Host "Found: $($nb.FullName)"
+
+            # .ipyn -> 复制为 .ipynb 以便 nbconvert
+            $tmpNb = $nb.FullName
+            if ($nb.Extension -ieq ".ipyn") {
+              $tmpNb = [System.IO.Path]::ChangeExtension($nb.FullName, ".ipynb")
+              Copy-Item $nb.FullName $tmpNb -Force
+              Write-Host "Copied to $tmpNb for nbconvert"
+            }
+
+            # 尝试 JSON 解析以判断是否为合法 Notebook
+            $isJson = $true
+            try {
+              Get-Content -Raw -LiteralPath $tmpNb | ConvertFrom-Json | Out-Null
+            } catch {
+              $isJson = $false
+            }
+
+            if ($isJson) {
+              # 合法 .ipynb -> 使用 nbconvert
+              python -m jupyter nbconvert --to=script "$tmpNb" --output "trade_parser_app"
+              if (Test-Path "trade_parser_app.py.py") {
+                Move-Item "trade_parser_app.py.py" "trade_parser_app.py" -Force
+              }
+              if (-not (Test-Path $outPy)) {
+                Write-Error "nbconvert did not produce $outPy"
+                Get-ChildItem -File | Format-Table
+                exit 1
+              }
+              $generated = $true
+            } else {
+              # 不是 JSON，大概率是 .py 被误命名；直接当脚本复制
+              Copy-Item $tmpNb $outPy -Force
+              Write-Host "Source is not JSON; treated as .py and saved to $outPy"
+              $generated = $true
+            }
           }
 
-          :AfterGen
-
-          # 4) 去掉 IPython 魔法等（若存在）
-          if (Test-Path $outPy) {
-            (Get-Content $outPy) `
-              | Where-Object { $_ -notmatch 'get_ipython\(' -and $_ -notmatch '^\s*[%!]' -and $_ -notmatch 'ipykernel' } `
-              | Set-Content $outPy -Encoding UTF8
-          } else {
-            Write-Error "$outPy missing after conversion/copy."
+          if (-not $generated) {
+            Write-Error "Failed to produce $outPy"
             exit 1
           }
 
-          # 5) 自动补入口（如果脚本没有 mainloop）
+          # 去掉 IPython 魔法（若存在）
+          (Get-Content $outPy) `
+            | Where-Object { $_ -notmatch 'get_ipython\(' -and $_ -notmatch '^\s*[%!]' -and $_ -notmatch 'ipykernel' } `
+            | Set-Content $outPy -Encoding UTF8
+
+          # 若脚本无 main 入口则补上
           $hasMain = Select-String -Path $outPy -Pattern '__main__' -Quiet
           if (-not $hasMain) {
             Add-Content $outPy "`nif __name__ == '__main__':`n    App().mainloop()`n"
@@ -132,19 +138,21 @@ jobs:
       - name: Sanity check imports (must succeed)
         shell: pwsh
         run: |
-          @'
+          $code = @"
 import sys
-print("python:", sys.version)
+print('python:', sys.version)
 import pandas, numpy, openpyxl, tkinter
 try:
     import tksheet
-    print("tksheet:", tksheet.__version__)
+    print('tksheet:', tksheet.__version__)
 except Exception:
-    print("tksheet: not installed (optional)")
-print("pandas:", pandas.__version__)
-print("numpy:", numpy.__version__)
-print("openpyxl:", openpyxl.__version__)
-'@ | python -
+    print('tksheet: not installed (optional)')
+print('pandas:', pandas.__version__)
+print('numpy:', numpy.__version__)
+print('openpyxl:', openpyxl.__version__)
+"@
+          Set-Content -Path sanity_check.py -Value $code -Encoding UTF8
+          python sanity_check.py
 
       - name: Build EXE (onefile)
         shell: pwsh
