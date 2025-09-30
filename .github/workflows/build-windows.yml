@@ -34,60 +34,93 @@ jobs:
           if (Test-Path "requirements.txt") {
             pip install -r requirements.txt
           } else {
-            pip install pandas==2.2.2 numpy==1.26.4 openpyxl==3.1.5 pyinstaller==6.10.0 jupyter==1.0.0 nbconvert==7.16.4
+            pip install pandas==2.2.2 numpy==1.26.4 openpyxl==3.1.5 pyinstaller==6.10.0 jupyter==1.0.0 nbconvert==7.16.4 tksheet==7.2.14
           }
-          pip show pandas numpy openpyxl pyinstaller nbconvert | findstr /R /C:"Name:" /C:"Version:"
+          pip show pandas numpy openpyxl pyinstaller nbconvert tksheet | findstr /R /C:"Name:" /C:"Version:"
 
-      # 将 .ipynb/.ipyn 转成 trade_parser_app.py（若仓库已自带 .py 则跳过）
+      # --- 关键：检测/转换为 trade_parser_app.py（鲁棒处理 .py / .ipynb / .ipyn） ---
       - name: Detect or convert Notebook -> trade_parser_app.py
         shell: pwsh
         run: |
           $outPy = "trade_parser_app.py"
           if (Test-Path $outPy) {
             Write-Host "Found $outPy, skip conversion."
-          } else {
-            # 找到一个 .ipynb 或 .ipyn
-            $nb = Get-ChildItem -Recurse -File -Include *.ipynb,*.ipyn | Select-Object -First 1
-            if (-not $nb) {
-              Write-Error "No .ipynb or .ipyn found. Add your Notebook to the repo or commit trade_parser_app.py"
-              exit 1
-            }
-            Write-Host "Found Notebook: $($nb.FullName)"
+            exit 0
+          }
 
-            # .ipyn 先复制为 .ipynb 以便 nbconvert
-            $tmpNb = $nb.FullName
-            if ($nb.Extension -ieq ".ipyn") {
-              $tmpNb = [System.IO.Path]::ChangeExtension($nb.FullName, ".ipynb")
-              Copy-Item $nb.FullName $tmpNb -Force
-              Write-Host "Copied to $tmpNb for nbconvert"
-            }
+          # 1) 优先找现成 .py
+          $py = Get-ChildItem -Recurse -File -Include *.py | Where-Object { $_.Name -eq "trade_parser_app.py" } | Select-Object -First 1
+          if (-not $py) {
+            $py = Get-ChildItem -Recurse -File -Include *.py | Select-Object -First 1
+          }
+          if ($py) {
+            Copy-Item $py.FullName $outPy -Force
+            Write-Host "Copied existing .py as $outPy"
+            goto AfterGen
+          }
 
-            # 注意：--output 不要带 .py 后缀
+          # 2) 找 .ipynb / .ipyn
+          $nb = Get-ChildItem -Recurse -File -Include *.ipynb,*.ipyn | Select-Object -First 1
+          if (-not $nb) {
+            Write-Error "No .py/.ipynb/.ipyn found. Add your source file to the repo."
+            exit 1
+          }
+          Write-Host "Found: $($nb.FullName)"
+
+          # 如为 .ipyn -> 复制为 .ipynb 以便 nbconvert
+          $tmpNb = $nb.FullName
+          if ($nb.Extension -ieq ".ipyn") {
+            $tmpNb = [System.IO.Path]::ChangeExtension($nb.FullName, ".ipynb")
+            Copy-Item $nb.FullName $tmpNb -Force
+            Write-Host "Copied to $tmpNb for nbconvert"
+          }
+
+          # 3) 尝试 JSON 解析以判断是否为合法 Notebook
+          $isJson = $true
+          try {
+            Get-Content -Raw -LiteralPath $tmpNb | ConvertFrom-Json | Out-Null
+          } catch {
+            $isJson = $false
+          }
+
+          if ($isJson) {
+            # 合法 .ipynb -> 使用 nbconvert
             python -m jupyter nbconvert --to=script "$tmpNb" --output "trade_parser_app"
-
-            # 兼容某些版本生成 trade_parser_app.py.py 的情况
             if (Test-Path "trade_parser_app.py.py") {
               Move-Item "trade_parser_app.py.py" "trade_parser_app.py" -Force
             }
-
             if (-not (Test-Path $outPy)) {
               Write-Error "nbconvert did not produce $outPy"
               Get-ChildItem -File | Format-Table
               exit 1
             }
+          } else {
+            # 不是 JSON，几乎可以确定是 .py 被误命名；直接复制为 .py
+            Copy-Item $tmpNb $outPy -Force
+            Write-Host "Source is not JSON; treated as .py and saved to $outPy"
+          }
 
-            # 去掉 IPython 痕迹（可选）
+          :AfterGen
+
+          # 4) 去掉 IPython 魔法等（若存在）
+          if (Test-Path $outPy) {
             (Get-Content $outPy) `
               | Where-Object { $_ -notmatch 'get_ipython\(' -and $_ -notmatch '^\s*[%!]' -and $_ -notmatch 'ipykernel' } `
               | Set-Content $outPy -Encoding UTF8
-
-            # 自动补入口（如果没有 mainloop）
-            $hasMain = Select-String -Path $outPy -Pattern '__main__' -Quiet
-            if (-not $hasMain) {
-              Add-Content $outPy "`nif __name__ == '__main__':`n    App().mainloop()`n"
-              Write-Host "App entry added to $outPy"
-            }
+          } else {
+            Write-Error "$outPy missing after conversion/copy."
+            exit 1
           }
+
+          # 5) 自动补入口（如果脚本没有 mainloop）
+          $hasMain = Select-String -Path $outPy -Pattern '__main__' -Quiet
+          if (-not $hasMain) {
+            Add-Content $outPy "`nif __name__ == '__main__':`n    App().mainloop()`n"
+            Write-Host "App entry added to $outPy"
+          }
+
+          Write-Host "=== Head of generated $outPy ==="
+          Get-Content $outPy -TotalCount 40 | ForEach-Object { Write-Host $_ }
 
       - name: List files before build
         shell: pwsh
@@ -96,18 +129,22 @@ jobs:
           pwd
           Get-ChildItem -Force | Format-Table Name,Length
 
-
       - name: Sanity check imports (must succeed)
-        shell: bash
+        shell: pwsh
         run: |
-          python - << 'PY'
-          import sys
-          print("python:", sys.version)
-          import pandas, numpy, openpyxl, tkinter
-          print("pandas:", pandas.__version__)
-          print("numpy:", numpy.__version__)
-          print("openpyxl:", openpyxl.__version__)
-          PY
+          @'
+import sys
+print("python:", sys.version)
+import pandas, numpy, openpyxl, tkinter
+try:
+    import tksheet
+    print("tksheet:", tksheet.__version__)
+except Exception:
+    print("tksheet: not installed (optional)")
+print("pandas:", pandas.__version__)
+print("numpy:", numpy.__version__)
+print("openpyxl:", openpyxl.__version__)
+'@ | python -
 
       - name: Build EXE (onefile)
         shell: pwsh
@@ -119,10 +156,12 @@ jobs:
             "--collect-all","numpy",
             "--collect-all","numpy.libs",
             "--collect-all","openpyxl",
+            "--collect-all","tksheet",
             "--hidden-import","tkinter",
             "--hidden-import","pandas",
             "--hidden-import","numpy",
             "--hidden-import","openpyxl",
+            "--hidden-import","tksheet",
             "--log-level","INFO"
           )
           if (Test-Path "app.ico") { $args += @("--icon","app.ico") }
@@ -146,10 +185,12 @@ jobs:
             "--collect-all","numpy",
             "--collect-all","numpy.libs",
             "--collect-all","openpyxl",
+            "--collect-all","tksheet",
             "--hidden-import","tkinter",
             "--hidden-import","pandas",
             "--hidden-import","numpy",
             "--hidden-import","openpyxl",
+            "--hidden-import","tksheet",
             "--log-level","INFO"
           )
           if (Test-Path "app.ico") { $args += @("--icon","app.ico") }
